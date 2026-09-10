@@ -18,6 +18,14 @@ npm start
 npm run start:backend
 ```
 
+Para executar a API sem hot reload:
+
+```bash
+npm run start:backend:prod
+```
+
+Este projeto usa Uvicorn para servir o FastAPI. O comando `gunicorn` não é necessário; se for obrigatório no ambiente de produção, instale-o e use um worker ASGI compatível, como `uvicorn.workers.UvicornWorker`.
+
 O frontend fica em `http://localhost:3000` e encaminha `/api` para a API em `http://localhost:8000`.
 
 Credenciais de demonstração: `sysadmin@rpps.sp.gov.br` / `admin123`.
