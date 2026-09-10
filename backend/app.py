@@ -289,6 +289,11 @@ def startup():
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+@app.get("/")
+def root():
+    return {"name": app.title, "status": "ok", "health": "/api/health"}
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
