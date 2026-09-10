@@ -26,6 +26,16 @@ npm run start:backend:prod
 
 Este projeto usa Uvicorn para servir o FastAPI. O comando `gunicorn` não é necessário; se for obrigatório no ambiente de produção, instale-o e use um worker ASGI compatível, como `uvicorn.workers.UvicornWorker`.
 
+### Deploy no Render
+
+O arquivo `render.yaml` já configura o serviço Python. No Render, use a raiz do repositório como diretório e deixe o Blueprint aplicar estas configurações. O comando correto é:
+
+```bash
+gunicorn -k uvicorn.workers.UvicornWorker backend.app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+```
+
+Não use `gunicorn app:app`: o módulo da aplicação está em `backend.app`. Configure `CORS_ORIGINS` com a URL pública do frontend e defina um `DATABASE_PATH` persistente para não perder SQLite e uploads em redeploys.
+
 O frontend fica em `http://localhost:3000` e encaminha `/api` para a API em `http://localhost:8000`.
 
 Credenciais de demonstração: `sysadmin@rpps.sp.gov.br` / `admin123`.
