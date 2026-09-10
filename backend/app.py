@@ -13,17 +13,20 @@ import jwt
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 
-BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = Path(os.getenv("DATABASE_PATH", BASE_DIR / "nexo.db"))
+BASE_DIR = Path(__file__).resolve().parent.parent
+DIST_DIR = BASE_DIR / "dist"
+DATABASE_PATH = Path(os.getenv("DATABASE_PATH", BASE_DIR / "backend" / "nexo.db"))
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-development-secret")
 JWT_ALGORITHM = "HS256"
 TOKEN_MINUTES = int(os.getenv("TOKEN_MINUTES", "60"))
 APP_ENV = os.getenv("APP_ENV", "PROD").upper()
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", BASE_DIR / "uploads"))
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", BASE_DIR / "backend" / "uploads"))
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 ALLOWED_UPLOAD_TYPES = {"application/pdf", "image/png", "image/jpeg"}
 
@@ -289,11 +292,6 @@ def startup():
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
-@app.get("/")
-def root():
-    return {"name": app.title, "status": "ok", "health": "/api/health"}
-
-
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
@@ -485,3 +483,17 @@ def export_segurados_xml(user=Depends(require_permission("relatorios:read"))):
             ET.SubElement(item, key).text = str(value)
     audit_event(user, "export", "segurados", metadata="xml")
     return Response(content=ET.tostring(root, encoding="unicode"), media_type="application/xml", headers={"Content-Disposition": "attachment; filename=segurados.xml"})
+
+
+ASSETS_DIR = DIST_DIR / "assets"
+
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    file_path = DIST_DIR / full_path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+    return FileResponse(DIST_DIR / "index.html")
