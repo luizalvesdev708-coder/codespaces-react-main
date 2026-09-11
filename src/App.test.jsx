@@ -2,8 +2,8 @@ import { expect, test } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('renders CENSO DOTAL login shell', () => {
+test('renders Dotal login shell', () => {
   render(<App />);
-  const title = screen.getAllByText(/CENSO/i)[0];
+  const title = screen.getByAltText(/Dotal consultoria/i);
   expect(title).toBeDefined();
 });

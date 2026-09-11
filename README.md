@@ -44,6 +44,14 @@ O backend cria `backend/nexo.db` automaticamente, usa PBKDF2 para armazenar senh
 
 ## Governança disponível
 
+## Design e arquitetura
+
+- Tokens compartilhados de tema em [`src/tokens.css`](src/tokens.css), com modos `dark`, `light` e `auto`.
+- A interface usa estética HUD ciano/navy, grid técnico, foco visível e fallback PWA.
+- A proposta de extração progressiva para micro-frontends está em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+- A estratégia de migração para Android/iOS, offline-first e recursos nativos está em [`docs/MOBILE_ARCHITECTURE.md`](docs/MOBILE_ARCHITECTURE.md).
+- O modo `auto` acompanha `prefers-color-scheme` em tempo real e a escolha é persistida por usuário.
+
 - RBAC no backend com os perfis `SYSADMIN`, `Analista`, `Auditor`, `Gestor Financeiro` e `Atuário`.
 - Contexto de tenant com troca sem logout, ambiente `PROD`/`HOMOLOG` e porte do RPPS.
 - Auditoria persistida de login, leitura, troca de tenant e exportação.

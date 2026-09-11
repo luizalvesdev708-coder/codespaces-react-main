@@ -5,7 +5,9 @@ import io
 import os
 import secrets
 import sqlite3
+import tempfile
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as xml_escape
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,7 +15,7 @@ import jwt
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -392,6 +394,18 @@ def notifications(user=Depends(current_user)):
     return {"items": [dict(row) for row in rows]}
 
 
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: int, user=Depends(current_user)):
+    connection = connect_db()
+    cursor = connection.execute("UPDATE notifications SET read = 1 WHERE id = ?", (notification_id,))
+    connection.commit()
+    connection.close()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notificação não encontrada")
+    audit_event(user, "read", "notification", str(notification_id))
+    return {"read": True, "id": notification_id}
+
+
 @app.get("/api/settings")
 def get_settings(user=Depends(current_user)):
     connection = connect_db()
@@ -439,50 +453,80 @@ async def upload_document(
     if file.content_type not in ALLOWED_UPLOAD_TYPES:
         audit_event(user, "upload_error", "document", segurado_id, f"type:{file.content_type}")
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Formato inválido. Use PDF, PNG ou JPEG.")
-    content = await file.read()
-    if not content or len(content) > MAX_UPLOAD_BYTES:
-        audit_event(user, "upload_error", "document", segurado_id, "size-limit")
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Arquivo vazio ou maior que 10 MB.")
     safe_name = Path(file.filename or "documento").name
     stored_name = f"{secrets.token_hex(8)}-{safe_name}"
     destination = UPLOAD_DIR / stored_name
-    destination.write_bytes(content)
-    connection = connect_db()
-    cursor = connection.execute(
-        "INSERT INTO uploads (tenant_id, user_id, segurado_id, filename, content_type, size_bytes, path, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (user["tenant_id"], user["id"], segurado_id, safe_name, file.content_type, len(content), str(destination), "confirmed"),
-    )
-    connection.commit()
-    connection.close()
-    audit_event(user, "upload", "document", segurado_id, f"file:{safe_name};bytes:{len(content)}")
-    return {"id": cursor.lastrowid, "filename": safe_name, "size_bytes": len(content), "status": "confirmed"}
+    size = 0
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=UPLOAD_DIR, prefix=".upload-", delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Arquivo maior que 10 MB.")
+                temporary.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="O arquivo está vazio.")
+        os.replace(temporary_path, destination)
+        connection = connect_db()
+        cursor = connection.execute(
+            "INSERT INTO uploads (tenant_id, user_id, segurado_id, filename, content_type, size_bytes, path, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user["tenant_id"], user["id"], segurado_id, safe_name, file.content_type, size, str(destination), "confirmed"),
+        )
+        connection.commit()
+        connection.close()
+    except HTTPException:
+        if temporary_path and temporary_path.exists(): temporary_path.unlink()
+        audit_event(user, "upload_error", "document", segurado_id, "size-or-empty")
+        raise
+    except OSError as error:
+        if temporary_path and temporary_path.exists(): temporary_path.unlink()
+        audit_event(user, "upload_error", "document", segurado_id, f"storage:{type(error).__name__}")
+        raise HTTPException(status_code=status.HTTP_507_INSUFFICIENT_STORAGE, detail="Não foi possível salvar o arquivo com segurança.") from error
+    except sqlite3.Error as error:
+        if destination.exists(): destination.unlink()
+        audit_event(user, "upload_error", "document", segurado_id, f"database:{type(error).__name__}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Arquivo recebido, mas não foi possível registrar a operação.") from error
+    audit_event(user, "upload", "document", segurado_id, f"file:{safe_name};bytes:{size}")
+    return {"id": cursor.lastrowid, "filename": safe_name, "size_bytes": size, "status": "confirmed"}
 
 
 @app.get("/api/segurados/export.csv")
 def export_segurados(user=Depends(require_permission("relatorios:read"))):
-    connection = connect_db()
-    rows = connection.execute("SELECT cpf, nome, beneficio, ente, status, data, risk FROM segurados ORDER BY id").fetchall()
-    connection.close()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["CPF", "Nome", "Benefício", "Ente", "Status", "Data", "Risco"])
-    writer.writerows([tuple(row) for row in rows])
+    def stream_csv():
+        connection = connect_db()
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, lineterminator="\r\n")
+        writer.writerow(["CPF", "Nome", "Benefício", "Ente", "Status", "Data", "Risco"])
+        yield "\ufeff" + buffer.getvalue()
+        buffer.seek(0); buffer.truncate(0)
+        cursor = connection.execute("SELECT cpf, nome, beneficio, ente, status, data, risk FROM segurados ORDER BY id")
+        while rows := cursor.fetchmany(500):
+            for row in rows:
+                writer.writerow(["" if value is None else value for value in row])
+            yield buffer.getvalue()
+            buffer.seek(0); buffer.truncate(0)
+        connection.close()
     audit_event(user, "export", "segurados", metadata="csv")
-    return Response(content="\ufeff" + output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=segurados.csv"})
+    return StreamingResponse(stream_csv(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=segurados.csv"})
 
 
 @app.get("/api/segurados/export.xml")
 def export_segurados_xml(user=Depends(require_permission("relatorios:read"))):
-    connection = connect_db()
-    rows = connection.execute("SELECT cpf, nome, beneficio, ente, status, data, risk FROM segurados ORDER BY id").fetchall()
-    connection.close()
-    root = ET.Element("rpps", {"tenant": user["tenant_id"], "version": APP_VERSION})
-    for row in rows:
-        item = ET.SubElement(root, "segurado")
-        for key, value in dict(row).items():
-            ET.SubElement(item, key).text = str(value)
     audit_event(user, "export", "segurados", metadata="xml")
-    return Response(content=ET.tostring(root, encoding="unicode"), media_type="application/xml", headers={"Content-Disposition": "attachment; filename=segurados.xml"})
+    def stream_xml():
+        connection = connect_db()
+        yield f'<?xml version="1.0" encoding="UTF-8"?>\n<rpps tenant="{xml_escape(str(user["tenant_id"]))}" version="{xml_escape(APP_VERSION)}">\n'
+        cursor = connection.execute("SELECT cpf, nome, beneficio, ente, status, data, risk FROM segurados ORDER BY id")
+        for row in cursor:
+            item = ET.Element("segurado")
+            for key, value in dict(row).items():
+                ET.SubElement(item, key).text = "" if value is None else str(value)
+            yield ET.tostring(item, encoding="unicode") + "\n"
+        connection.close()
+        yield "</rpps>\n"
+    return StreamingResponse(stream_xml(), media_type="application/xml; charset=utf-8", headers={"Content-Disposition": "attachment; filename=segurados.xml"})
 
 
 ASSETS_DIR = DIST_DIR / "assets"

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 86" role="img" aria-labelledby="title desc">
+  <title id="title">Dotal consultoria</title>
+  <desc id="desc">Logo Dotal consultoria</desc>
+  <rect width="260" height="86" fill="none"/>
+  <path d="M18 16h28c17 0 29 11 29 27S63 70 46 70H18V16Zm11 10v34h16c11 0 19-7 19-17s-8-17-19-17H29Z" fill="#c49a43"/>
+  <path d="M29 16v54h-8V16h8Z" fill="#17335d"/>
+  <text x="70" y="58" fill="#17335d" font-family="Trebuchet MS, Arial, sans-serif" font-size="48" letter-spacing="-3">otal</text>
+  <circle cx="235" cy="57" r="4" fill="#c49a43"/>
+  <text x="148" y="76" fill="#8a8c91" font-family="Arial, sans-serif" font-size="10" letter-spacing=".5">consultoria</text>
+</svg>
